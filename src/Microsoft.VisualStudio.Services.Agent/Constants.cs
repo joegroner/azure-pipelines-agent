@@ -362,6 +362,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 public static readonly string WorkFolder = "agent.workfolder";
                 public static readonly string WorkingDirectory = "agent.WorkingDirectory";
                 public static readonly string EnableAdditionalMaskingRegexes = "agent.enableadditionalmaskingregexes";
+                public static readonly string AllowAgentContainerHooks = "agent.allowContainerHooks";
             }
 
             public static class Build
@@ -561,6 +562,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 Agent.WorkFolder,
                 Agent.WorkingDirectory,
                 Agent.EnableAdditionalMaskingRegexes,
+                Agent.AllowAgentContainerHooks,
                 // Build variables
                 Build.ArtifactStagingDirectory,
                 Build.BinariesDirectory,

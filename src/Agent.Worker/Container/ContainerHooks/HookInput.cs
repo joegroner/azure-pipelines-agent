@@ -30,9 +30,17 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         [EnumMember(Value = "run_container_step")]
         RunContainerStep,
     }
+
+    [ServiceLocator(Default = typeof(NullArgs))]
     public interface IHookArgs
     {
         bool IsRequireAlpineInResponse();
+    }
+
+    // to keep the ServiceLocator happy for testing
+    public class NullArgs : IHookArgs
+    {
+        public bool IsRequireAlpineInResponse() => false;
     }
 
     public class PrepareJobArgs : IHookArgs

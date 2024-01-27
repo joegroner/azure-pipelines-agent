@@ -18,6 +18,7 @@ using Azure.Identity;
 using Microsoft.TeamFoundation.Work.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Container;
+using Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks;
 using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
 using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 using Microsoft.VisualStudio.Services.Common;
@@ -38,13 +39,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
     {
         private const string _nodeJsPathLabel = "com.azure.dev.pipelines.agent.handler.node.path";
         private IDockerCommandManager _dockerManger;
+        private IContainerHookManager _containerHookManager;
         private string _containerNetwork;
 
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
-            _dockerManger = HostContext.GetService<IDockerCommandManager>();
-            _containerNetwork = $"vsts_network_{Guid.NewGuid():N}";
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(Constants.Hooks.ContainerHooksPath)))
+            {
+                _dockerManger = HostContext.GetService<IDockerCommandManager>();
+                _containerNetwork = $"vsts_network_{Guid.NewGuid():N}";
+            }
+            else
+            {
+                _containerHookManager = HostContext.GetService<IContainerHookManager>();
+            }
         }
 
         private string GetContainerNetwork(IExecutionContext executionContext)
@@ -60,6 +69,14 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             List<ContainerInfo> containers = data as List<ContainerInfo>;
             ArgUtil.NotNull(containers, nameof(containers));
             containers = containers.FindAll(c => c != null); // attempt to mitigate issue #11902 filed in azure-pipelines-task repo
+
+            if (executionContext.Variables.Agent_AllowContainerHooks ?? false && _containerHookManager != null)
+            {
+                // Initialize the containers
+                containers.Where(container => container.IsJobContainer).ForEach(container => MountWellKnownDirectories(executionContext, container));
+                await _containerHookManager.PrepareJobAsync(executionContext, containers);
+                return;
+            }
 
             // Check whether we are inside a container.
             // Our container feature requires to map working directory from host to the container.
@@ -150,6 +167,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
             List<ContainerInfo> containers = data as List<ContainerInfo>;
             ArgUtil.NotNull(containers, nameof(containers));
+
+            if (executionContext.Variables.Agent_AllowContainerHooks ?? false && _containerHookManager != null)
+            {
+                await _containerHookManager.CleanupJobAsync(executionContext, containers);
+                return;
+            }
 
             foreach (var container in containers)
             {
@@ -406,71 +429,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 Trace.Info($"User provided volume: {volume.Value}");
             }
 
-            if (container.ImageOS != PlatformUtil.OS.Windows)
-            {
-                if (AgentKnobs.MountWorkspace.GetValue(executionContext).AsBoolean())
-                {
-                    string workspace = executionContext.Variables.Get(Constants.Variables.Pipeline.Workspace);
-                    workspace = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(workspace));
-                    string mountWorkspace = container.TranslateToHostPath(workspace);
-                    executionContext.Debug($"Workspace {workspace}");
-                    executionContext.Debug($"Mount Workspace {mountWorkspace}");
-                    container.MountVolumes.Add(new MountVolume(mountWorkspace, workspace, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
-                }
-                else
-                {
-                    string defaultWorkingDirectory = executionContext.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory);
-                    defaultWorkingDirectory = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(defaultWorkingDirectory));
-                    if (string.IsNullOrEmpty(defaultWorkingDirectory))
-                    {
-                        throw new NotSupportedException(StringUtil.Loc("ContainerJobRequireSystemDefaultWorkDir"));
-                    }
-
-                    string workingDirectory = IOUtil.GetDirectoryName(defaultWorkingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), container.ImageOS);
-                    string mountWorkingDirectory = container.TranslateToHostPath(workingDirectory);
-                    executionContext.Debug($"Default Working Directory {defaultWorkingDirectory}");
-                    executionContext.Debug($"Working Directory {workingDirectory}");
-                    executionContext.Debug($"Mount Working Directory {mountWorkingDirectory}");
-                    if (!string.IsNullOrEmpty(workingDirectory))
-                    {
-                        container.MountVolumes.Add(new MountVolume(mountWorkingDirectory, workingDirectory, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
-                    }
-                }
-
-                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Temp), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Temp))));
-                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tasks), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tasks)),
-                    readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tasks)));
-            }
-            else
-            {
-                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Work), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Work)),
-                    readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
-
-                if (AgentKnobs.AllowMountTasksReadonlyOnWindows.GetValue(executionContext).AsBoolean())
-                {
-                    container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tasks), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tasks)),
-                        readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tasks)));
-                }
-            }
-
-            container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tools), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tools)),
-                readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tools)));
-
-            bool externalReadOnly = container.ImageOS != PlatformUtil.OS.Windows || container.isReadOnlyVolume(Constants.DefaultContainerMounts.Externals); // This code was refactored to use PlatformUtils. The previous implementation did not have the externals directory mounted read-only for Windows.
-                                                                                                                                                            // That seems wrong, but to prevent any potential backwards compatibility issues, we are keeping the same logic
-            container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Externals), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Externals)), externalReadOnly));
-
-            if (container.ImageOS != PlatformUtil.OS.Windows)
-            {
-                // Ensure .taskkey file exist so we can mount it.
-                string taskKeyFile = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Work), ".taskkey");
-
-                if (!File.Exists(taskKeyFile))
-                {
-                    File.WriteAllText(taskKeyFile, string.Empty);
-                }
-                container.MountVolumes.Add(new MountVolume(taskKeyFile, container.TranslateToContainerPath(taskKeyFile)));
-            }
+            MountWellKnownDirectories(executionContext, container);
 
             if (container.IsJobContainer)
             {
@@ -938,7 +897,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        private async Task<List<string>> DockerExec(IExecutionContext context, string containerId, string command, bool noExceptionOnError=false)
+        private async Task<List<string>> DockerExec(IExecutionContext context, string containerId, string command, bool noExceptionOnError = false)
         {
             Trace.Info($"Docker-exec is going to execute: `{command}`; container id: `{containerId}`");
             List<string> output = new List<string>();
@@ -956,7 +915,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             if (exitCode != 0)
             {
                 Trace.Error(message);
-                if(!noExceptionOnError)
+                if (!noExceptionOnError)
                 {
                     throw new InvalidOperationException(message);
                 }
@@ -1045,6 +1004,75 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             var publishTelemetryCmd = new TelemetryCommandExtension();
             publishTelemetryCmd.Initialize(HostContext);
             publishTelemetryCmd.ProcessCommand(executionContext, cmd);
+        }
+
+        private void MountWellKnownDirectories(IExecutionContext executionContext, ContainerInfo container)
+        {
+            if (container.ImageOS != PlatformUtil.OS.Windows)
+            {
+                if (AgentKnobs.MountWorkspace.GetValue(executionContext).AsBoolean())
+                {
+                    string workspace = executionContext.Variables.Get(Constants.Variables.Pipeline.Workspace);
+                    workspace = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(workspace));
+                    string mountWorkspace = container.TranslateToHostPath(workspace);
+                    executionContext.Debug($"Workspace {workspace}");
+                    executionContext.Debug($"Mount Workspace {mountWorkspace}");
+                    container.MountVolumes.Add(new MountVolume(mountWorkspace, workspace, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
+                }
+                else
+                {
+                    string defaultWorkingDirectory = executionContext.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory);
+                    defaultWorkingDirectory = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(defaultWorkingDirectory));
+                    if (string.IsNullOrEmpty(defaultWorkingDirectory))
+                    {
+                        throw new NotSupportedException(StringUtil.Loc("ContainerJobRequireSystemDefaultWorkDir"));
+                    }
+
+                    string workingDirectory = IOUtil.GetDirectoryName(defaultWorkingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), container.ImageOS);
+                    string mountWorkingDirectory = container.TranslateToHostPath(workingDirectory);
+                    executionContext.Debug($"Default Working Directory {defaultWorkingDirectory}");
+                    executionContext.Debug($"Working Directory {workingDirectory}");
+                    executionContext.Debug($"Mount Working Directory {mountWorkingDirectory}");
+                    if (!string.IsNullOrEmpty(workingDirectory))
+                    {
+                        container.MountVolumes.Add(new MountVolume(mountWorkingDirectory, workingDirectory, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
+                    }
+                }
+
+                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Temp), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Temp))));
+                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tasks), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tasks)),
+                    readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tasks)));
+            }
+            else
+            {
+                container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Work), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Work)),
+                    readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
+
+                if (AgentKnobs.AllowMountTasksReadonlyOnWindows.GetValue(executionContext).AsBoolean())
+                {
+                    container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tasks), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tasks)),
+                        readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tasks)));
+                }
+            }
+
+            container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tools), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tools)),
+                readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Tools)));
+
+            bool externalReadOnly = container.ImageOS != PlatformUtil.OS.Windows || container.isReadOnlyVolume(Constants.DefaultContainerMounts.Externals); // This code was refactored to use PlatformUtils. The previous implementation did not have the externals directory mounted read-only for Windows.
+                                                                                                                                                            // That seems wrong, but to prevent any potential backwards compatibility issues, we are keeping the same logic
+            container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Externals), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Externals)), externalReadOnly));
+
+            if (container.ImageOS != PlatformUtil.OS.Windows)
+            {
+                // Ensure .taskkey file exist so we can mount it.
+                string taskKeyFile = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Work), ".taskkey");
+
+                if (!File.Exists(taskKeyFile))
+                {
+                    File.WriteAllText(taskKeyFile, string.Empty);
+                }
+                container.MountVolumes.Add(new MountVolume(taskKeyFile, container.TranslateToContainerPath(taskKeyFile)));
+            }
         }
     }
 }

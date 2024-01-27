@@ -141,6 +141,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
         public string Agent_ProxyPassword => Get(Constants.Variables.Agent.ProxyPassword);
 
+        public bool? Agent_AllowContainerHooks => GetBoolean(Constants.Variables.Agent.AllowAgentContainerHooks);
+
         public int? Build_BuildId => GetInt(BuildWebApi.BuildVariables.BuildId);
 
         public string Build_BuildUri => Get(BuildWebApi.BuildVariables.BuildUri);

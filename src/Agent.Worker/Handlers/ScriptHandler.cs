@@ -23,19 +23,12 @@ namespace GitHub.Runner.Worker.Handlers
     {
         public ScriptHandlerData Data { get; set; }
 
-        // TODO: go back through an un-edited version of RunAsync tomorrow and see if we need to handle all of the
-        //   Step and StepHost qualifiers and branching
-
-
         public async Task RunAsync()
         {
             // Validate args
             Trace.Entering();
             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
             ArgUtil.NotNull(Inputs, nameof(Inputs));
-
-            // var githubContext = ExecutionContext.ExpressionValues["github"] as GitHubContext;
-            // ArgUtil.NotNull(githubContext, nameof(githubContext));
 
             var tempDirectory = HostContext.GetDirectory(WellKnownDirectory.Temp);
 
@@ -154,35 +147,52 @@ namespace GitHub.Runner.Worker.Handlers
                 fileName = node;
             }
 #endif
-            var systemConnection = ExecutionContext.Endpoints.Single(x => string.Equals(x.Name, "SystemVssConnection", StringComparison.OrdinalIgnoreCase));
-            if (systemConnection.Data.TryGetValue("GenerateIdTokenUrl", out var generateIdTokenUrl) && !string.IsNullOrEmpty(generateIdTokenUrl))
-            {
-                Environment["ACTIONS_ID_TOKEN_REQUEST_URL"] = generateIdTokenUrl;
-                Environment["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = systemConnection.Authorization.Parameters[EndpointAuthorizationParameters.AccessToken];
-            }
+            AddEndpointsToEnvironment();
 
             ExecutionContext.Debug($"{fileName} {arguments}");
 
             Inputs.TryGetValue("standardInInput", out var standardInInput);
-            // Execute
-            int exitCode = await StepHost.ExecuteAsync(
-                                        workingDirectory: StepHost.ResolvePathForStepHost(workingDirectory),
-                                        fileName: fileName,
-                                        arguments: arguments,
-                                        environment: Environment,
-                                        requireExitCodeZero: false,
-                                        outputEncoding: null,
-                                        killProcessOnCancel: false,
-                                        inheritConsoleHandler: !ExecutionContext.Variables.Retain_Default_Encoding,
-                                        continueAfterCancelProcessTreeKillAttempt: AgentKnobs.ContinueAfterCancelProcessTreeKillAttempt.GetValue(ExecutionContext).AsBoolean(),
-                                        standardInInput: standardInInput,
-                                        cancellationToken: ExecutionContext.CancellationToken);
 
-            // Error
-            if (exitCode != 0)
+            StepHost.OutputDataReceived += OnDataReceived;
+            StepHost.ErrorDataReceived += OnDataReceived;
+
+            try
             {
-                ExecutionContext.Error($"Process completed with exit code {exitCode}.");
-                ExecutionContext.Result = TaskResult.Failed;
+                // Execute
+                int exitCode = await StepHost.ExecuteAsync(
+                                            workingDirectory: StepHost.ResolvePathForStepHost(workingDirectory),
+                                            fileName: fileName,
+                                            arguments: arguments,
+                                            environment: Environment,
+                                            requireExitCodeZero: false,
+                                            outputEncoding: null,
+                                            killProcessOnCancel: false,
+                                            inheritConsoleHandler: !ExecutionContext.Variables.Retain_Default_Encoding,
+                                            continueAfterCancelProcessTreeKillAttempt: AgentKnobs.ContinueAfterCancelProcessTreeKillAttempt.GetValue(ExecutionContext).AsBoolean(),
+                                            standardInInput: standardInInput,
+                                            cancellationToken: ExecutionContext.CancellationToken);
+                
+                // Error
+                if (exitCode != 0)
+                {
+                    ExecutionContext.Error($"Process completed with exit code {exitCode}.");
+                    ExecutionContext.Result = TaskResult.Failed;
+                }
+            }
+            finally
+            {
+                StepHost.OutputDataReceived -= OnDataReceived;
+                StepHost.ErrorDataReceived -= OnDataReceived;
+            }
+        }
+
+        private void OnDataReceived(object sender, ProcessDataReceivedEventArgs e)
+        {
+            // This does not need to be inside of a critical section.
+            // The logging queues and command handlers are thread-safe.
+            if (!CommandManager.TryProcessCommand(ExecutionContext, e.Data))
+            {
+                ExecutionContext.Output(e.Data);
             }
         }
     }
