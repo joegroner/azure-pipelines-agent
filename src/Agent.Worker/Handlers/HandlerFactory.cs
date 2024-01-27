@@ -8,6 +8,7 @@ using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using System.IO;
+using GitHub.Runner.Worker.Handlers;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
@@ -109,6 +110,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                 // Agent plugin
                 handler = HostContext.CreateService<IAgentPluginHandler>();
                 (handler as IAgentPluginHandler).Data = data as AgentPluginHandlerData;
+            }
+            else if (data is ScriptHandlerData)
+            {
+                handler = HostContext.CreateService<IScriptHandler>();
+                (handler as IScriptHandler).Data = data as ScriptHandlerData;
             }
             else
             {

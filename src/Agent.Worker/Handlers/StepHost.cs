@@ -13,6 +13,7 @@ using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Container;
 using Microsoft.VisualStudio.Services.WebApi;
 using Newtonsoft.Json;
+using System.Threading.Channels;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
@@ -32,6 +33,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                                bool killProcessOnCancel,
                                bool inheritConsoleHandler,
                                bool continueAfterCancelProcessTreeKillAttempt,
+                               string standardInInput,
                                CancellationToken cancellationToken);
     }
 
@@ -66,10 +68,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                                             bool killProcessOnCancel,
                                             bool inheritConsoleHandler,
                                             bool continueAfterCancelProcessTreeKillAttempt,
+                                            string standardInInput,
                                             CancellationToken cancellationToken)
         {
             using (var processInvoker = HostContext.CreateService<IProcessInvoker>())
             {
+                Channel<string> redirectStandardIn = null;
+                if (standardInInput != null)
+                {
+                    redirectStandardIn = Channel.CreateUnbounded<string>(new UnboundedChannelOptions() { SingleReader = true, SingleWriter = true });
+                    redirectStandardIn.Writer.TryWrite(standardInInput);
+                }
+
                 processInvoker.OutputDataReceived += OutputDataReceived;
                 processInvoker.ErrorDataReceived += ErrorDataReceived;
 
@@ -139,6 +149,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                                             bool killProcessOnCancel,
                                             bool inheritConsoleHandler,
                                             bool continueAfterCancelProcessTreeKillAttempt,
+                                            string standardInInput,
                                             CancellationToken cancellationToken)
         {
             // make sure container exist.

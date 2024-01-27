@@ -905,4 +905,22 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
     {
         public override int Priority => 0;
     }
+
+    public sealed class ScriptHandlerData : HandlerData
+    {
+        public override int Priority => 9;
+
+        public string WorkingDirectory
+        {
+            get
+            {
+                return GetInput(nameof(WorkingDirectory));
+            }
+
+            set
+            {
+                SetInput(nameof(WorkingDirectory), value);
+            }
+        }
+    }
 }

@@ -18,6 +18,7 @@ using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -89,6 +90,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         /// <returns></returns>
         void CancelForceTaskCompletion();
         void EmitHostNode20FallbackTelemetry(bool node20ResultsInGlibCErrorHost);
+
+        JObject ContainerHookState { get; set; }
     }
 
     public sealed class ExecutionContext : AgentService, IExecutionContext, IDisposable
@@ -173,6 +176,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         }
 
         public PlanFeatures Features { get; private set; }
+        public JObject ContainerHookState { get; set; }
 
         public override void Initialize(IHostContext hostContext)
         {

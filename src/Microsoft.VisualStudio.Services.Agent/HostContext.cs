@@ -35,6 +35,7 @@ namespace Microsoft.VisualStudio.Services.Agent
         ShutdownReason AgentShutdownReason { get; }
         ILoggedSecretMasker SecretMasker { get; }
         ProductInfoHeaderValue UserAgent { get; }
+        AgentWebProxy WebProxy { get; }
         string GetDirectory(WellKnownDirectory directory);
         string GetDiagDirectory(HostType hostType = HostType.Undefined);
         string GetConfigFile(WellKnownConfigFile configFile);
@@ -87,13 +88,14 @@ namespace Microsoft.VisualStudio.Services.Agent
         private SecretMasker _newSecretMasker = new SecretMasker();
         private StartupType _startupType;
         private string _perfFile;
+        private AgentWebProxy _webProxy = new();
         private HostType _hostType;
         public event EventHandler Unloading;
         public CancellationToken AgentShutdownToken => _agentShutdownTokenSource.Token;
         public ShutdownReason AgentShutdownReason { get; private set; }
         public ILoggedSecretMasker SecretMasker => _secretMasker;
         public ProductInfoHeaderValue UserAgent => _userAgent;
-
+        public AgentWebProxy WebProxy => _webProxy;
         public HostContext(HostType hostType, string logFile = null)
         {
             var useNewSecretMasker =  AgentKnobs.EnableNewSecretMasker.GetValue(this).AsBoolean();
@@ -174,7 +176,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 }
             }
         }
-
+        
         public virtual string GetDirectory(WellKnownDirectory directory)
         {
             string path;
@@ -749,6 +751,31 @@ namespace Microsoft.VisualStudio.Services.Agent
             foreach (var pattern in AdditionalMaskingRegexes.CredScanPatterns)
             {
                 context.SecretMasker.AddRegex(pattern, $"HostContext_{WellKnownSecretAliases.CredScanPatterns}");
+            }
+        }
+
+        public static string GetDefaultShellForScript(this IHostContext hostContext, string path, string prependPath)
+        {
+            var trace = hostContext.GetTrace(nameof(GetDefaultShellForScript));
+            switch (Path.GetExtension(path))
+            {
+                case ".sh":
+                    // use 'sh' args but prefer bash
+                    if (WhichUtil.Which("bash", false, trace, prependPath) != null)
+                    {
+                        return "bash";
+                    }
+                    return "sh";
+                case ".ps1":
+                    if (WhichUtil.Which("pwsh", false, trace, prependPath) != null)
+                    {
+                        return "pwsh";
+                    }
+                    return "powershell";
+                case ".js":
+                    return Path.Combine(hostContext.GetDirectory(WellKnownDirectory.Externals), NodeUtil.GetInternalNodeVersion(hostContext), "bin", $"node{IOUtil.ExeExtension}") + " {0}";
+                default:
+                    throw new ArgumentException($"{path} is not a valid path to a script. Make sure it ends in '.sh', '.ps1' or '.js'.");
             }
         }
     }

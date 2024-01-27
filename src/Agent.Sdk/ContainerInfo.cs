@@ -303,6 +303,8 @@ namespace Agent.Sdk
                 PathMappings.Add(path.Key, path.Value);
             }
         }
+
+        public bool IsAlpine { get; set; }
     }
 
 
