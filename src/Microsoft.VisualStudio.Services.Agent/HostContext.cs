@@ -93,7 +93,7 @@ namespace Microsoft.VisualStudio.Services.Agent
         public ShutdownReason AgentShutdownReason { get; private set; }
         public ILoggedSecretMasker SecretMasker => _secretMasker;
         public ProductInfoHeaderValue UserAgent => _userAgent;
-        
+
         public HostContext(HostType hostType, string logFile = null)
         {
             var useNewSecretMasker =  AgentKnobs.EnableNewSecretMasker.GetValue(this).AsBoolean();
