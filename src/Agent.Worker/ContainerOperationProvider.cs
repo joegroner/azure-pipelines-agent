@@ -81,7 +81,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     c.RemovePathMapping(HostContext.GetDirectory(WellKnownDirectory.Root));
                     c.AddPathMappings(
                         new Dictionary<string, string> { 
-                            { HostContext.GetDirectory(WellKnownDirectory.Externals), "/__e"}, //Path.Combine(c.PathMappings[HostContext.GetDirectory(WellKnownDirectory.Work)], "externals")
+                            { HostContext.GetDirectory(WellKnownDirectory.Externals), "/__e"},
                             { HostContext.GetDirectory(WellKnownDirectory.Root), rootValue}
                         });
                     MountWellKnownDirectories(executionContext, c);
