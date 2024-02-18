@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Agent.Sdk;
+using Agent.Sdk.Knob;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
 using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
@@ -20,7 +21,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         Task RunContainerStepAsync(IExecutionContext context, ContainerInfo container, string dockerFile);
         Task RunScriptStepAsync(IExecutionContext context, ContainerInfo container, string workingDirectory, string fileName, string arguments, IDictionary<string, string> environment, string prependPath);
         Task CleanupJobAsync(IExecutionContext context, List<ContainerInfo> containers);
-        string GetContainerHookData();
+        IDictionary<string,string> GetContainerHookData();
     }
 
     public class ContainerHookManager : AgentService, IContainerHookManager
@@ -31,7 +32,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
-            HookScriptPath = $"{Environment.GetEnvironmentVariable(Constants.Hooks.ContainerHooksPath)}";
+            HookScriptPath = AgentKnobs.ContainerHooksPath.GetValue(hostContext).AsString();
         }
 
         public async Task PrepareJobAsync(IExecutionContext context, List<ContainerInfo> containers)
@@ -56,7 +57,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             if (jobContainer != null)
             {
                 jobContainer.IsAlpine = response.IsAlpine.Value;
+                // TODO: add code to container hook to test for node 20_1 issues and set NeedsNode16Redirect
             }
+            context.Debug(string.Format("response.state={0}", response.State));
             SaveHookState(context, response.State, input);
             UpdateJobContext(context, jobContainer, serviceContainers, response);
         }
@@ -64,7 +67,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         public async Task RunContainerStepAsync(IExecutionContext context, ContainerInfo container, string dockerFile)
         {
             Trace.Entering();
-            var hookState = context.ContainerHookState;
+            var hookState = context.GlobalContext.ContainerHookState;
             var containerStepArgs = new ContainerStepArgs(container);
             if (!string.IsNullOrEmpty(dockerFile))
             {
@@ -91,6 +94,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         public async Task RunScriptStepAsync(IExecutionContext context, ContainerInfo container, string workingDirectory, string entryPoint, string entryPointArgs, IDictionary<string, string> environmentVariables, string prependPath)
         {
             Trace.Entering();
+
+            context.Debug(string.Format("context.containerhookstate={0}", context.GlobalContext.ContainerHookState));
+
             var input = new HookInput
             {
                 Command = HookCommand.RunScriptStep,
@@ -103,7 +109,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                     PrependPath = context.PrependPath.Reverse<string>(),
                     WorkingDirectory = workingDirectory,
                 },
-                State = context.ContainerHookState
+                State = context.GlobalContext.ContainerHookState
             };
 
             var response = await ExecuteHookScript<HookResponse>(context, input, JobRunStage.PreJob, prependPath);
@@ -123,15 +129,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                 Command = HookCommand.CleanupJob,
                 ResponseFile = GenerateResponsePath(),
                 Args = new CleanupJobArgs(),
-                State = context.ContainerHookState
+                State = context.GlobalContext.ContainerHookState
             };
             var prependPath = GetPrependPath(context);
             await ExecuteHookScript<HookResponse>(context, input, JobRunStage.PreJob, prependPath);
         }
 
-        public string GetContainerHookData()
+        public IDictionary<string,string> GetContainerHookData()
         {
-            return JsonUtility.ToString(new { HookScriptPath });
+            return new Dictionary<string,string> { {"hookScriptPath", HookScriptPath} };
         }
 
         private async Task<T> ExecuteHookScript<T>(IExecutionContext context, HookInput input, JobRunStage stage, string prependPath) where T : HookResponse
@@ -147,7 +153,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                 {
                     ["standardInInput"] = JsonUtility.ToString(input),
                     ["path"] = HookScriptPath,
-                    ["shell"] = HostContext.GetDefaultShellForScript(HookScriptPath, prependPath)
+                    ["shell"] = GetDefaultShellForScript(context, HookScriptPath, prependPath),
+                    ["tempDirectory"] = HostContext.GetDirectory(WellKnownDirectory.Temp)
                 };
 
                 var handlerFactory = HostContext.GetService<IHandlerFactory>();
@@ -155,13 +162,13 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                                 context,
                                 null,
                                 stepHost,
-                                null,
-                                null,
+                                context.Endpoints,
+                                context.SecureFiles,
                                 new ScriptHandlerData(),
                                 inputs,
                                 environment: new Dictionary<string, string>(VarUtil.EnvironmentVariableKeyComparer),
                                 context.Variables,
-                                scriptDirectory) as ProcessHandler;
+                                scriptDirectory) as ScriptHandler;
                 //handler.PrepareExecution(stage);
 
                 IOUtil.CreateEmptyFile(input.ResponseFile);
@@ -175,7 +182,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             }
             catch (Exception ex)
             {
-                throw new Exception($"Executing the custom container implementation failed. Please contact your self hosted runner administrator.", ex);
+                throw new Exception($"Executing the custom container implementation failed. Please contact your self hosted runner administrator.\n" + ex.ToString(), ex);
             }
         }
 
@@ -187,13 +194,13 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         {
             if (!string.IsNullOrEmpty(HookScriptPath) && !File.Exists(HookScriptPath))
             {
-                throw new FileNotFoundException($"File not found at '{HookScriptPath}'. Set {Constants.Hooks.ContainerHooksPath} to the path of an existing file.");
+                throw new FileNotFoundException($"File not found at '{HookScriptPath}'. Set {AgentKnobs.ContainerHooksPath.Name} to the path of an existing file.");
             }
 
             var supportedHookExtensions = new string[] { ".js", ".sh", ".ps1" };
             if (!supportedHookExtensions.Any(extension => HookScriptPath.EndsWith(extension)))
             {
-                throw new ArgumentOutOfRangeException($"Invalid file extension at '{HookScriptPath}'. {Constants.Hooks.ContainerHooksPath} must be a path to a file with one of the following extensions: {string.Join(", ", supportedHookExtensions)}");
+                throw new ArgumentOutOfRangeException($"Invalid file extension at '{HookScriptPath}'. {AgentKnobs.ContainerHooksPath.Name} must be a path to a file with one of the following extensions: {string.Join(", ", supportedHookExtensions)}");
             }
         }
 
@@ -228,7 +235,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                 Trace.Info($"No 'state' property found in response file for '{input.Command}'. Global variable for 'ContainerHookState' will not be updated.");
                 return;
             }
-            context.ContainerHookState = hookState;
+            context.GlobalContext.ContainerHookState = hookState;
             Trace.Info($"Global variable 'ContainerHookState' updated successfully for '{input.Command}' with data found in 'state' property of the response file.");
         }
 
@@ -282,6 +289,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             }
 
             context.Variables.Set(Constants.Variables.Agent.ContainerMapping, containerMapping.ToString());
+
+            // The container-hooks expect these variables to be in the environment
+            context.Variables.Set("github.workspace", context.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory));
+            context.Variables.Set("runner.workspace", context.Variables.Get(Constants.Variables.Agent.WorkFolder));
         }
 
         private void PublishTelemetry(
@@ -300,6 +311,30 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             var publishTelemetryCmd = new TelemetryCommandExtension();
             publishTelemetryCmd.Initialize(HostContext);
             publishTelemetryCmd.ProcessCommand(executionContext, cmd);
+        }
+
+        private string GetDefaultShellForScript(IExecutionContext executionContext, string path, string prependPath)
+        {
+            switch (Path.GetExtension(path))
+            {
+                case ".sh":
+                    // use 'sh' args but prefer bash
+                    if (WhichUtil.Which("bash", false, Trace, prependPath) != null)
+                    {
+                        return "bash";
+                    }
+                    return "sh";
+                case ".ps1":
+                    if (WhichUtil.Which("pwsh", false, Trace, prependPath) != null)
+                    {
+                        return "pwsh";
+                    }
+                    return "powershell";
+                case ".js":
+                    return Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), NodeUtil.GetInternalNodeVersion(executionContext), "bin", $"node{IOUtil.ExeExtension}") + " {0}";
+                default:
+                    throw new ArgumentException($"{path} is not a valid path to a script. Make sure it ends in '.sh', '.ps1' or '.js'.");
+            }
         }
     }
 }

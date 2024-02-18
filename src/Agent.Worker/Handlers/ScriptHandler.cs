@@ -11,7 +11,7 @@ using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker;
 using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
 
-namespace GitHub.Runner.Worker.Handlers
+namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
     [ServiceLocator(Default = typeof(ScriptHandler))]
     public interface IScriptHandler : IHandler
@@ -30,19 +30,13 @@ namespace GitHub.Runner.Worker.Handlers
             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
             ArgUtil.NotNull(Inputs, nameof(Inputs));
 
-            var tempDirectory = HostContext.GetDirectory(WellKnownDirectory.Temp);
-
             Inputs.TryGetValue("script", out var contents);
             contents = contents ?? string.Empty;
 
             string workingDirectory = Data.WorkingDirectory;
             if (string.IsNullOrEmpty(workingDirectory))
             {
-                workingDirectory = ExecutionContext.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory);
-                if (string.IsNullOrEmpty(workingDirectory))
-                {
-                    workingDirectory = HostContext.GetDirectory(WellKnownDirectory.Work);
-                }
+                workingDirectory = HostContext.GetDirectory(WellKnownDirectory.Work);
             }
 
             string shell = Inputs.GetValueOrDefault("shell");
@@ -91,12 +85,22 @@ namespace GitHub.Runner.Worker.Handlers
                 {
                     var parsed = ScriptHandlerHelpers.ParseShellOptionString(shell);
                     shellCommand = parsed.shellCommand;
-                    // For non-ContainerStepHost, the command must be located on the host by Which
-                    commandPath = WhichUtil.Which(parsed.shellCommand, !isContainerStepHost, Trace, prependPath);
-                    argFormat = $"{parsed.shellArgs}".TrimStart();
-                    if (string.IsNullOrEmpty(argFormat))
+
+                    if(Path.IsPathFullyQualified(shellCommand) && File.Exists(shellCommand))
                     {
-                        argFormat = ScriptHandlerHelpers.GetScriptArgumentsFormat(shellCommand);
+                        commandPath = shellCommand;
+                        var command = Path.GetFileName(shellCommand);
+                        argFormat = ScriptHandlerHelpers.GetScriptArgumentsFormat(command);
+                    }
+                    else
+                    {
+                        // For non-ContainerStepHost, the command must be located on the host by Which
+                        commandPath = WhichUtil.Which(parsed.shellCommand, !isContainerStepHost, Trace, prependPath);
+                        argFormat = $"{parsed.shellArgs}".TrimStart();
+                        if (string.IsNullOrEmpty(argFormat))
+                        {
+                            argFormat = ScriptHandlerHelpers.GetScriptArgumentsFormat(shellCommand);
+                        }
                     }
                 }
             }
@@ -149,9 +153,18 @@ namespace GitHub.Runner.Worker.Handlers
 #endif
             AddEndpointsToEnvironment();
 
+            string tempDirectory = Inputs.GetValueOrDefault("tempDirectory");
+            if(!string.IsNullOrEmpty(tempDirectory))
+            {
+                Environment.Add("RUNNER_TEMP", tempDirectory);
+            }
+
             ExecutionContext.Debug($"{fileName} {arguments}");
 
             Inputs.TryGetValue("standardInInput", out var standardInInput);
+
+            ExecutionContext.Debug(standardInInput);
+            ExecutionContext.Debug(Environment["RUNNER_TEMP"]);
 
             StepHost.OutputDataReceived += OnDataReceived;
             StepHost.ErrorDataReceived += OnDataReceived;
@@ -160,6 +173,7 @@ namespace GitHub.Runner.Worker.Handlers
             {
                 // Execute
                 int exitCode = await StepHost.ExecuteAsync(
+                                            ExecutionContext,
                                             workingDirectory: StepHost.ResolvePathForStepHost(workingDirectory),
                                             fileName: fileName,
                                             arguments: arguments,

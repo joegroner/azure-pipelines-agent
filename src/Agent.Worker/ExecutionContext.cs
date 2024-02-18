@@ -51,6 +51,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         List<ContainerInfo> Containers { get; }
         List<ContainerInfo> SidecarContainers { get; }
         List<TaskRestrictions> Restrictions { get; }
+        GlobalContext GlobalContext {get;}
 
         // Initialize
         void InitializeJob(Pipelines.AgentJobRequestMessage message, CancellationToken token);
@@ -90,8 +91,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         /// <returns></returns>
         void CancelForceTaskCompletion();
         void EmitHostNode20FallbackTelemetry(bool node20ResultsInGlibCErrorHost);
-
-        JObject ContainerHookState { get; set; }
     }
 
     public sealed class ExecutionContext : AgentService, IExecutionContext, IDisposable
@@ -176,7 +175,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         }
 
         public PlanFeatures Features { get; private set; }
-        public JObject ContainerHookState { get; set; }
+        public GlobalContext GlobalContext { get; private set; }
 
         public override void Initialize(IHostContext hostContext)
         {
@@ -229,6 +228,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
             var child = new ExecutionContext();
             child.Initialize(HostContext);
+            child.GlobalContext = GlobalContext;
             child.Features = Features;
             child.Variables = Variables;
             child.Endpoints = Endpoints;
@@ -482,6 +482,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             ArgUtil.NotNull(message.Plan, nameof(message.Plan));
 
             _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+            GlobalContext = new GlobalContext();
 
             // Features
             Features = PlanUtil.GetFeatures(message.Plan);

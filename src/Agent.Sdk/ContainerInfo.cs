@@ -304,6 +304,11 @@ namespace Agent.Sdk
             }
         }
 
+        public void RemovePathMapping(string key)
+        {
+            PathMappings.Remove(key);
+        }
+
         public bool IsAlpine { get; set; }
     }
 

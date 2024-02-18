@@ -134,6 +134,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     {
                         try
                         {
+                            // TODO: we do not possess a means in ContainerHookManager to see if the container is running, so we're going to throw a NotSupportedException
+                            if(!string.IsNullOrEmpty(AgentKnobs.ContainerHooksPath.GetValue(HostContext).AsString()))
+                            {
+                                throw new NotSupportedException("The ContainerHookManager does not support the AGENT_SKIP_POST_EXECUTION_IF_CONTAINER_STOPPED option");
+                            }
+
                             // Check that the target container is still running, if not Skip task execution
                             IDockerCommandManager dockerManager = HostContext.GetService<IDockerCommandManager>();
                             bool isContainerRunning = await dockerManager.IsContainerRunning(ExecutionContext, containerTarget.ContainerId);
@@ -172,7 +178,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     {
                         // Only the node, node10, and powershell3 handlers support running inside container.
                         // Make sure required container is already created.
-                        ArgUtil.NotNullOrEmpty(containerTarget.ContainerId, nameof(containerTarget.ContainerId));
+                        // Container hooks do not necessarily set 'ContainerId'
+                        if(string.IsNullOrEmpty(AgentKnobs.ContainerHooksPath.GetValue(HostContext).AsString()))
+                        {
+                            ArgUtil.NotNullOrEmpty(containerTarget.ContainerId, nameof(containerTarget.ContainerId));
+                        }
                         var containerStepHost = HostContext.CreateService<IContainerStepHost>();
                         containerStepHost.Container = containerTarget;
                         stepHost = containerStepHost;

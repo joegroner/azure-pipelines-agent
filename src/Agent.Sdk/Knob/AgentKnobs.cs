@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.TeamFoundation.SourceControl.WebApi;
+
 namespace Agent.Sdk.Knob
 {
     public class AgentKnobs
@@ -566,5 +568,11 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("AZP_AGENT_DOCKER_INIT_OPTION"),
             new EnvironmentKnobSource("AZP_AGENT_DOCKER_INIT_OPTION"),
             new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob ContainerHooksPath = new Knob(
+            nameof(ContainerHooksPath),
+            "Path to directory with container hooks packages.",
+            new EnvironmentKnobSource("AZP_AGENT_CONTAINER_HOOKS"),
+            new BuiltInDefaultKnobSource(string.Empty));
     }
 }

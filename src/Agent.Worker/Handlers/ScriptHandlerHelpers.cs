@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace GitHub.Runner.Worker.Handlers
+namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
     internal static class ScriptHandlerHelpers
     {
@@ -12,7 +12,8 @@ namespace GitHub.Runner.Worker.Handlers
             ["powershell"] = "-command \". '{0}'\"",
             ["bash"] = "--noprofile --norc -e -o pipefail {0}",
             ["sh"] = "-e {0}",
-            ["python"] = "{0}"
+            ["python"] = "{0}",
+            ["node"] = "{0}"
         };
 
         private static readonly Dictionary<string, string> _extensions = new(StringComparer.OrdinalIgnoreCase)
@@ -22,7 +23,8 @@ namespace GitHub.Runner.Worker.Handlers
             ["powershell"] = ".ps1",
             ["bash"] = ".sh",
             ["sh"] = ".sh",
-            ["python"] = ".py"
+            ["python"] = ".py",
+            ["node"] = ".js"
         };
 
         internal static string GetScriptArgumentsFormat(string scriptType)

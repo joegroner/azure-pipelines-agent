@@ -220,7 +220,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                 // Execute the process. Exit code 0 should always be returned.
                 // A non-zero exit code indicates infrastructural failure.
                 // Task failure should be communicated over STDOUT using ## commands.
-                Task step = StepHost.ExecuteAsync(workingDirectory: StepHost.ResolvePathForStepHost(workingDirectory),
+                Task step = StepHost.ExecuteAsync(ExecutionContext,
+                                                  workingDirectory: StepHost.ResolvePathForStepHost(workingDirectory),
                                                   fileName: StepHost.ResolvePathForStepHost(file),
                                                   arguments: arguments,
                                                   environment: Environment,

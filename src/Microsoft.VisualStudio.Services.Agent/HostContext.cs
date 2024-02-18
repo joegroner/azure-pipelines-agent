@@ -753,31 +753,6 @@ namespace Microsoft.VisualStudio.Services.Agent
                 context.SecretMasker.AddRegex(pattern, $"HostContext_{WellKnownSecretAliases.CredScanPatterns}");
             }
         }
-
-        public static string GetDefaultShellForScript(this IHostContext hostContext, string path, string prependPath)
-        {
-            var trace = hostContext.GetTrace(nameof(GetDefaultShellForScript));
-            switch (Path.GetExtension(path))
-            {
-                case ".sh":
-                    // use 'sh' args but prefer bash
-                    if (WhichUtil.Which("bash", false, trace, prependPath) != null)
-                    {
-                        return "bash";
-                    }
-                    return "sh";
-                case ".ps1":
-                    if (WhichUtil.Which("pwsh", false, trace, prependPath) != null)
-                    {
-                        return "pwsh";
-                    }
-                    return "powershell";
-                case ".js":
-                    return Path.Combine(hostContext.GetDirectory(WellKnownDirectory.Externals), NodeUtil.GetInternalNodeVersion(hostContext), "bin", $"node{IOUtil.ExeExtension}") + " {0}";
-                default:
-                    throw new ArgumentException($"{path} is not a valid path to a script. Make sure it ends in '.sh', '.ps1' or '.js'.");
-            }
-        }
     }
 
     public enum ShutdownReason

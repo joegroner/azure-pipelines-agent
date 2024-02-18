@@ -14,6 +14,9 @@ using Microsoft.VisualStudio.Services.Agent.Worker.Container;
 using Microsoft.VisualStudio.Services.WebApi;
 using Newtonsoft.Json;
 using System.Threading.Channels;
+using System.Linq;
+using Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks;
+using Agent.Sdk.Knob;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
@@ -24,7 +27,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 
         string ResolvePathForStepHost(string path);
 
-        Task<int> ExecuteAsync(string workingDirectory,
+        Task<int> ExecuteAsync(IExecutionContext context,
+                               string workingDirectory,
                                string fileName,
                                string arguments,
                                IDictionary<string, string> environment,
@@ -59,7 +63,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
             return path;
         }
 
-        public async Task<int> ExecuteAsync(string workingDirectory,
+        public async Task<int> ExecuteAsync(IExecutionContext context,
+                                            string workingDirectory,
                                             string fileName,
                                             string arguments,
                                             IDictionary<string, string> environment,
@@ -73,27 +78,29 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
         {
             using (var processInvoker = HostContext.CreateService<IProcessInvoker>())
             {
-                Channel<string> redirectStandardIn = null;
-                if (standardInInput != null)
+
+                using(var redirectStandardIn = new InputQueue<string>())
                 {
-                    redirectStandardIn = Channel.CreateUnbounded<string>(new UnboundedChannelOptions() { SingleReader = true, SingleWriter = true });
-                    redirectStandardIn.Writer.TryWrite(standardInInput);
+                    if(standardInInput != null)
+                    {
+                        redirectStandardIn.Enqueue(standardInInput);
+                    }
+
+                    processInvoker.OutputDataReceived += OutputDataReceived;
+                    processInvoker.ErrorDataReceived += ErrorDataReceived;
+
+                    return await processInvoker.ExecuteAsync(workingDirectory: workingDirectory,
+                                                            fileName: fileName,
+                                                            arguments: arguments,
+                                                            environment: environment,
+                                                            requireExitCodeZero: requireExitCodeZero,
+                                                            outputEncoding: outputEncoding,
+                                                            killProcessOnCancel: killProcessOnCancel,
+                                                            redirectStandardIn: redirectStandardIn,
+                                                            inheritConsoleHandler: inheritConsoleHandler,
+                                                            continueAfterCancelProcessTreeKillAttempt: continueAfterCancelProcessTreeKillAttempt,
+                                                            cancellationToken: cancellationToken);
                 }
-
-                processInvoker.OutputDataReceived += OutputDataReceived;
-                processInvoker.ErrorDataReceived += ErrorDataReceived;
-
-                return await processInvoker.ExecuteAsync(workingDirectory: workingDirectory,
-                                                         fileName: fileName,
-                                                         arguments: arguments,
-                                                         environment: environment,
-                                                         requireExitCodeZero: requireExitCodeZero,
-                                                         outputEncoding: outputEncoding,
-                                                         killProcessOnCancel: killProcessOnCancel,
-                                                         redirectStandardIn: null,
-                                                         inheritConsoleHandler: inheritConsoleHandler,
-                                                         continueAfterCancelProcessTreeKillAttempt: continueAfterCancelProcessTreeKillAttempt,
-                                                         cancellationToken: cancellationToken);
             }
         }
     }
@@ -109,7 +116,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
         {
             // make sure container exist.
             ArgUtil.NotNull(Container, nameof(Container));
-            ArgUtil.NotNullOrEmpty(Container.ContainerId, nameof(Container.ContainerId));
+            if(string.IsNullOrEmpty(AgentKnobs.ContainerHooksPath.GetValue(HostContext).AsString()))
+            {
+                ArgUtil.NotNullOrEmpty(Container.ContainerId, nameof(Container.ContainerId));
+            }
             ArgUtil.NotNull(path, nameof(path));
 
             // remove double quotes around the path
@@ -140,7 +150,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
             }
         }
 
-        public async Task<int> ExecuteAsync(string workingDirectory,
+        public async Task<int> ExecuteAsync(IExecutionContext context,
+                                            string workingDirectory,
                                             string fileName,
                                             string arguments,
                                             IDictionary<string, string> environment,
@@ -154,6 +165,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
         {
             // make sure container exist.
             ArgUtil.NotNull(Container, nameof(Container));
+            var containerHookManager = HostContext.GetService<IContainerHookManager>();
+            if (!string.IsNullOrEmpty(AgentKnobs.ContainerHooksPath.GetValue(HostContext).AsString()))
+            {
+                await containerHookManager.RunScriptStepAsync(context,
+                                                                Container,
+                                                                workingDirectory,
+                                                                fileName,
+                                                                arguments,
+                                                                environment,
+                                                                PrependPath);
+                return (int)(context.Result ?? 0);
+            }
             ArgUtil.NotNullOrEmpty(Container.ContainerId, nameof(Container.ContainerId));
 
             var dockerManger = HostContext.GetService<IDockerCommandManager>();
@@ -237,6 +260,14 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
                                                          inheritConsoleHandler: inheritConsoleHandler,
                                                          continueAfterCancelProcessTreeKillAttempt: continueAfterCancelProcessTreeKillAttempt,
                                                          cancellationToken: cancellationToken);
+            }
+        }
+
+        private void TranslateToContainerPath(IDictionary<string, string> environment)
+        {
+            foreach (var envKey in environment.Keys.ToList())
+            {
+                environment[envKey] = this.Container.TranslateToContainerPath(environment[envKey]);
             }
         }
 

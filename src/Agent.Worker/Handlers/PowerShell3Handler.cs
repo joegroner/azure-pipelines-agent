@@ -70,7 +70,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
             // Task failure should be communicated over STDOUT using ## commands.
             try
             {
-                await StepHost.ExecuteAsync(workingDirectory: StepHost.ResolvePathForStepHost(scriptDirectory),
+                await StepHost.ExecuteAsync(ExecutionContext,
+                                            workingDirectory: StepHost.ResolvePathForStepHost(scriptDirectory),
                                             fileName: powerShellExe,
                                             arguments: powerShellExeArgs,
                                             environment: Environment,

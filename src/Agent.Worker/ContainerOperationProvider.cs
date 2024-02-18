@@ -45,7 +45,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(Constants.Hooks.ContainerHooksPath)))
+            if (string.IsNullOrEmpty(AgentKnobs.ContainerHooksPath.GetValue(hostContext).AsString()))
             {
                 _dockerManger = HostContext.GetService<IDockerCommandManager>();
                 _containerNetwork = $"vsts_network_{Guid.NewGuid():N}";
@@ -70,10 +70,22 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             ArgUtil.NotNull(containers, nameof(containers));
             containers = containers.FindAll(c => c != null); // attempt to mitigate issue #11902 filed in azure-pipelines-task repo
 
-            if (executionContext.Variables.Agent_AllowContainerHooks ?? false && _containerHookManager != null)
+            if (_containerHookManager != null)
             {
                 // Initialize the containers
-                containers.Where(container => container.IsJobContainer).ForEach(container => MountWellKnownDirectories(executionContext, container));
+                foreach(var c in containers.Where(container => container.IsJobContainer))
+                {
+                    // The GitHub runner uses __e for externals rather than mapping the whole root, so we'll mimic that here
+                    c.RemovePathMapping("/var/run/docker.sock");
+                    var rootValue = c.PathMappings[HostContext.GetDirectory(WellKnownDirectory.Root)];
+                    c.RemovePathMapping(HostContext.GetDirectory(WellKnownDirectory.Root));
+                    c.AddPathMappings(
+                        new Dictionary<string, string> { 
+                            { HostContext.GetDirectory(WellKnownDirectory.Externals), "/__e"}, //Path.Combine(c.PathMappings[HostContext.GetDirectory(WellKnownDirectory.Work)], "externals")
+                            { HostContext.GetDirectory(WellKnownDirectory.Root), rootValue}
+                        });
+                    MountWellKnownDirectories(executionContext, c);
+                }
                 await _containerHookManager.PrepareJobAsync(executionContext, containers);
                 return;
             }
@@ -168,7 +180,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             List<ContainerInfo> containers = data as List<ContainerInfo>;
             ArgUtil.NotNull(containers, nameof(containers));
 
-            if (executionContext.Variables.Agent_AllowContainerHooks ?? false && _containerHookManager != null)
+            if (_containerHookManager != null)
             {
                 await _containerHookManager.CleanupJobAsync(executionContext, containers);
                 return;
