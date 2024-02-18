@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.TeamFoundation.SourceControl.WebApi;
-
 namespace Agent.Sdk.Knob
 {
     public class AgentKnobs
