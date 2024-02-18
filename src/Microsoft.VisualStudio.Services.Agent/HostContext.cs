@@ -35,7 +35,6 @@ namespace Microsoft.VisualStudio.Services.Agent
         ShutdownReason AgentShutdownReason { get; }
         ILoggedSecretMasker SecretMasker { get; }
         ProductInfoHeaderValue UserAgent { get; }
-        AgentWebProxy WebProxy { get; }
         string GetDirectory(WellKnownDirectory directory);
         string GetDiagDirectory(HostType hostType = HostType.Undefined);
         string GetConfigFile(WellKnownConfigFile configFile);
@@ -88,14 +87,12 @@ namespace Microsoft.VisualStudio.Services.Agent
         private SecretMasker _newSecretMasker = new SecretMasker();
         private StartupType _startupType;
         private string _perfFile;
-        private AgentWebProxy _webProxy = new();
         private HostType _hostType;
         public event EventHandler Unloading;
         public CancellationToken AgentShutdownToken => _agentShutdownTokenSource.Token;
         public ShutdownReason AgentShutdownReason { get; private set; }
         public ILoggedSecretMasker SecretMasker => _secretMasker;
         public ProductInfoHeaderValue UserAgent => _userAgent;
-        public AgentWebProxy WebProxy => _webProxy;
         public HostContext(HostType hostType, string logFile = null)
         {
             var useNewSecretMasker =  AgentKnobs.EnableNewSecretMasker.GetValue(this).AsBoolean();
@@ -176,7 +173,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 }
             }
         }
-        
+
         public virtual string GetDirectory(WellKnownDirectory directory)
         {
             string path;

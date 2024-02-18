@@ -18,7 +18,6 @@ using Agent.Sdk.Knob;
 using Agent.Sdk.SecretMasking;
 using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using SecretMasker = Agent.Sdk.SecretMasking.SecretMasker;
-using System.Net;
 
 namespace Microsoft.VisualStudio.Services.Agent.Tests
 {
@@ -36,8 +35,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
         private AssemblyLoadContext _loadContext;
         private string _tempDirectoryRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("D"));
         private StartupType _startupType;
-
-        private AgentWebProxy _webProxy = new();
         public event EventHandler Unloading;
         public CancellationToken AgentShutdownToken => _agentShutdownTokenSource.Token;
         public ShutdownReason AgentShutdownReason { get; private set; }
@@ -106,8 +103,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
         }
 
         public ProductInfoHeaderValue UserAgent => new ProductInfoHeaderValue("L0Test", "0.0");
-
-        public AgentWebProxy WebProxy => _webProxy;
 
         public async Task Delay(TimeSpan delay, CancellationToken token)
         {

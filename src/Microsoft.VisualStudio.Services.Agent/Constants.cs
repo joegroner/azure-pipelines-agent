@@ -269,12 +269,6 @@ namespace Microsoft.VisualStudio.Services.Agent
             public static readonly string Variables = "variables";
         }
 
-        public static class Hooks
-        {
-            public static readonly string JobStartedStepName = "Set up runner";
-            public static readonly string JobCompletedStepName = "Complete runner";
-        }
-
         public static class Path
         {
             public static readonly string BinDirectory = "bin";
