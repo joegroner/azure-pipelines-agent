@@ -310,6 +310,9 @@ namespace Agent.Sdk
         }
 
         public bool IsAlpine { get; set; }
+        public string RegistryServer { get; set; }
+        public string RegistryAuthUsername { get; set; }
+        public string RegistryAuthPassword { get; set; }
     }
 
 

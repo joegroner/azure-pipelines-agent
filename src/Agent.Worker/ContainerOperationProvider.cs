@@ -73,18 +73,19 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             if (_containerHookManager != null)
             {
                 // Initialize the containers
-                foreach(var c in containers.Where(container => container.IsJobContainer))
+                foreach (var c in containers.Where(container => container.IsJobContainer))
                 {
                     // The GitHub runner uses __e for externals rather than mapping the whole root, so we'll mimic that here
                     c.RemovePathMapping("/var/run/docker.sock");
                     var rootValue = c.PathMappings[HostContext.GetDirectory(WellKnownDirectory.Root)];
                     c.RemovePathMapping(HostContext.GetDirectory(WellKnownDirectory.Root));
                     c.AddPathMappings(
-                        new Dictionary<string, string> { 
+                        new Dictionary<string, string> {
                             { HostContext.GetDirectory(WellKnownDirectory.Externals), "/__e"},
                             { HostContext.GetDirectory(WellKnownDirectory.Root), rootValue}
                         });
                     MountWellKnownDirectories(executionContext, c);
+                    await GetRegistryLogin(executionContext, c);
                 }
                 await _containerHookManager.PrepareJobAsync(executionContext, containers);
                 return;
@@ -287,78 +288,20 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             Trace.Info($"Skip container image pull: {container.SkipContainerImagePull}");
 
             // Login to private docker registry
-            string registryServer = string.Empty;
+            container.RegistryServer = string.Empty;
             if (container.ContainerRegistryEndpoint != Guid.Empty)
             {
-                var registryEndpoint = executionContext.Endpoints.FirstOrDefault(x => x.Type == "dockerregistry" && x.Id == container.ContainerRegistryEndpoint);
-                ArgUtil.NotNull(registryEndpoint, nameof(registryEndpoint));
+                await GetRegistryLogin(executionContext, container);
 
-                string username = string.Empty;
-                string password = string.Empty;
-                string registryType = string.Empty;
-                string authType = string.Empty;
-
-                registryEndpoint.Data?.TryGetValue("registrytype", out registryType);
-                if (string.Equals(registryType, "ACR", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        executionContext.Debug("Attempting to get endpoint authorization scheme...");
-                        authType = registryEndpoint.Authorization?.Scheme;
-
-                        if (string.IsNullOrEmpty(authType))
-                        {
-                            executionContext.Debug("Attempting to get endpoint authorization scheme as an authorization parameter...");
-                            registryEndpoint.Authorization?.Parameters?.TryGetValue("scheme", out authType);
-                        }
-                    }
-                    catch
-                    {
-                        executionContext.Debug("Failed to get endpoint authorization scheme as an authorization parameter. Will default authorization scheme to ServicePrincipal");
-                        authType = "ServicePrincipal";
-                    }
-
-                    string loginServer = string.Empty;
-                    registryEndpoint.Authorization?.Parameters?.TryGetValue("loginServer", out loginServer);
-                    if (loginServer != null)
-                    {
-                        loginServer = loginServer.ToLower();
-                    }
-
-                    registryServer = $"https://{loginServer}";
-                    if (string.Equals(authType, "ManagedServiceIdentity", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string tenantId = string.Empty;
-                        registryEndpoint.Authorization?.Parameters?.TryGetValue("tenantid", out tenantId);
-                        // Documentation says to pass username through this way
-                        username = Guid.Empty.ToString("D");
-                        string AADToken = await GetMSIAccessToken(executionContext);
-                        executionContext.Debug("Successfully retrieved AAD token using the MSI authentication scheme.");
-                        // change to getting password from string
-                        password = await GetAcrPasswordFromAADToken(executionContext, AADToken, tenantId, registryServer, loginServer);
-                    }
-                    else
-                    {
-                        registryEndpoint.Authorization?.Parameters?.TryGetValue("serviceprincipalid", out username);
-                        registryEndpoint.Authorization?.Parameters?.TryGetValue("serviceprincipalkey", out password);
-                    }
-                }
-                else
-                {
-                    registryEndpoint.Authorization?.Parameters?.TryGetValue("registry", out registryServer);
-                    registryEndpoint.Authorization?.Parameters?.TryGetValue("username", out username);
-                    registryEndpoint.Authorization?.Parameters?.TryGetValue("password", out password);
-                }
-
-                ArgUtil.NotNullOrEmpty(registryServer, nameof(registryServer));
-                ArgUtil.NotNullOrEmpty(username, nameof(username));
-                ArgUtil.NotNullOrEmpty(password, nameof(password));
+                ArgUtil.NotNullOrEmpty(container.RegistryServer, nameof(container.RegistryServer));
+                ArgUtil.NotNullOrEmpty(container.RegistryAuthUsername, nameof(container.RegistryAuthUsername));
+                ArgUtil.NotNullOrEmpty(container.RegistryAuthPassword, nameof(container.RegistryAuthPassword));
 
                 int loginExitCode = await _dockerManger.DockerLogin(
                     executionContext,
-                    registryServer,
-                    username,
-                    password);
+                    container.RegistryServer,
+                    container.RegistryAuthUsername,
+                    container.RegistryAuthPassword);
 
                 if (loginExitCode != 0)
                 {
@@ -370,10 +313,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             {
                 if (!container.SkipContainerImagePull)
                 {
-                    if (!string.IsNullOrEmpty(registryServer) &&
-                        registryServer.IndexOf("index.docker.io", StringComparison.OrdinalIgnoreCase) < 0)
+                    if (!string.IsNullOrEmpty(container.RegistryServer) &&
+                        container.RegistryServer.IndexOf("index.docker.io", StringComparison.OrdinalIgnoreCase) < 0)
                     {
-                        var registryServerUri = new Uri(registryServer);
+                        var registryServerUri = new Uri(container.RegistryServer);
                         if (!container.ContainerImage.StartsWith(registryServerUri.Authority, StringComparison.OrdinalIgnoreCase))
                         {
                             container.ContainerImage = $"{registryServerUri.Authority}/{container.ContainerImage}";
@@ -409,9 +352,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             finally
             {
                 // Logout for private registry
-                if (!string.IsNullOrEmpty(registryServer))
+                if (!string.IsNullOrEmpty(container.RegistryServer))
                 {
-                    int logoutExitCode = await _dockerManger.DockerLogout(executionContext, registryServer);
+                    int logoutExitCode = await _dockerManger.DockerLogout(executionContext, container.RegistryServer);
                     if (logoutExitCode != 0)
                     {
                         executionContext.Error($"Docker logout fail with exit code {logoutExitCode}");
@@ -1085,6 +1028,74 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 }
                 container.MountVolumes.Add(new MountVolume(taskKeyFile, container.TranslateToContainerPath(taskKeyFile)));
             }
+        }
+
+        private async Task GetRegistryLogin(IExecutionContext executionContext, ContainerInfo container)
+        {
+            string registryServer = string.Empty;
+            var registryEndpoint = executionContext.Endpoints.FirstOrDefault(x => x.Type == "dockerregistry" && x.Id == container.ContainerRegistryEndpoint);
+            ArgUtil.NotNull(registryEndpoint, nameof(registryEndpoint));
+
+            string username = string.Empty;
+            string password = string.Empty;
+            string registryType = string.Empty;
+            string authType = string.Empty;
+
+            registryEndpoint.Data?.TryGetValue("registrytype", out registryType);
+            if (string.Equals(registryType, "ACR", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    executionContext.Debug("Attempting to get endpoint authorization scheme...");
+                    authType = registryEndpoint.Authorization?.Scheme;
+
+                    if (string.IsNullOrEmpty(authType))
+                    {
+                        executionContext.Debug("Attempting to get endpoint authorization scheme as an authorization parameter...");
+                        registryEndpoint.Authorization?.Parameters?.TryGetValue("scheme", out authType);
+                    }
+                }
+                catch
+                {
+                    executionContext.Debug("Failed to get endpoint authorization scheme as an authorization parameter. Will default authorization scheme to ServicePrincipal");
+                    authType = "ServicePrincipal";
+                }
+
+                string loginServer = string.Empty;
+                registryEndpoint.Authorization?.Parameters?.TryGetValue("loginServer", out loginServer);
+                if (loginServer != null)
+                {
+                    loginServer = loginServer.ToLower();
+                }
+
+                registryServer = $"https://{loginServer}";
+                if (string.Equals(authType, "ManagedServiceIdentity", StringComparison.OrdinalIgnoreCase))
+                {
+                    string tenantId = string.Empty;
+                    registryEndpoint.Authorization?.Parameters?.TryGetValue("tenantid", out tenantId);
+                    // Documentation says to pass username through this way
+                    username = Guid.Empty.ToString("D");
+                    string AADToken = await GetMSIAccessToken(executionContext);
+                    executionContext.Debug("Successfully retrieved AAD token using the MSI authentication scheme.");
+                    // change to getting password from string
+                    password = await GetAcrPasswordFromAADToken(executionContext, AADToken, tenantId, registryServer, loginServer);
+                }
+                else
+                {
+                    registryEndpoint.Authorization?.Parameters?.TryGetValue("serviceprincipalid", out username);
+                    registryEndpoint.Authorization?.Parameters?.TryGetValue("serviceprincipalkey", out password);
+                }
+            }
+            else
+            {
+                registryEndpoint.Authorization?.Parameters?.TryGetValue("registry", out registryServer);
+                registryEndpoint.Authorization?.Parameters?.TryGetValue("username", out username);
+                registryEndpoint.Authorization?.Parameters?.TryGetValue("password", out password);
+            }
+
+            container.RegistryServer = registryServer;
+            container.RegistryAuthUsername = username;
+            container.RegistryAuthPassword = password;
         }
     }
 }

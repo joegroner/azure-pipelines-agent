@@ -95,24 +95,22 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
         {
             Image = container.ContainerImage;
 
-            var (entrypoint, commands) = ExtractEntrypoint(container.ContainerCreateOptions);
+            var (modifiedOptions, entrypoint, arguments) = ParseDockerCommand(container.ContainerCreateOptions);
 
-            EntryPointArgs = entrypoint != null ? commands : new string[] {"-f","/dev/null"};
+            EntryPointArgs = entrypoint != null ? arguments : new string[] { "-f", "/dev/null" };
             EntryPoint = entrypoint != null ? entrypoint : "tail";
+            CreateOptions = modifiedOptions;
             //WorkingDirectory = container.ContainerWorkDirectory;
-            // TODO: remove entrypoint and command args from CreateOptions
-            CreateOptions = container.ContainerCreateOptions;
 
-            // Although there is a ContainerRegistryEndpoint property, refactoring out that logic is a TODO.
-            // if (!string.IsNullOrEmpty(container.RegistryAuthUsername))
-            // {
-            //     Registry = new ContainerRegistry
-            //     {
-            //         Username = container.RegistryAuthUsername,
-            //         Password = container.RegistryAuthPassword,
-            //         ServerUrl = container.RegistryServer,
-            //     };
-            // }
+            if (!string.IsNullOrEmpty(container.RegistryAuthUsername))
+            {
+                Registry = new ContainerRegistry
+                {
+                    Username = container.RegistryAuthUsername,
+                    Password = container.RegistryAuthPassword,
+                    ServerUrl = container.RegistryServer,
+                };
+            }
 
             EnvironmentVariables = container.ContainerEnvironmentVariables;
             PortMappings = container.UserPortMappings.Select(p => p.Value).ToList();
@@ -120,32 +118,31 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             UserMountVolumes = container.UserMountVolumes.Select(p => new MountVolume(p.Value));
         }
 
-        private static (string Entrypoint, string[] CommandArguments) ExtractEntrypoint(string options)
+        public static (string ModifiedOptions, string Entrypoint, string[] Arguments) ParseDockerCommand(string options)
         {
-            string pattern = @"--entrypoint\s+([^\s]+)|--\s+(.+)";
-
-            Regex regex = new Regex(pattern);
+            // Patterns to match "--entrypoint <value>" and "-- <args>"
+            string entrypointPattern = @"--entrypoint\s+([^\s]+)";
+            string argsPattern = @"--\s+(.+)$";
 
             string entrypoint = null;
-            string[] commandArguments = Array.Empty<string>();
+            string[] arguments = Array.Empty<string>();
+            string modifiedOptions = options;
 
-            var matches = regex.Matches(options);
-
-            foreach (Match match in matches)
+            Match entrypointMatch = Regex.Match(options, entrypointPattern);
+            if (entrypointMatch.Success)
             {
-                if (match.Groups[1].Success)
-                {
-                    // Extract the entrypoint
-                    entrypoint = match.Groups[1].Value;
-                }
-                else if (match.Groups[2].Success)
-                {
-                    // Extract command arguments after '--'
-                    commandArguments = match.Groups[2].Value.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                }
+                entrypoint = entrypointMatch.Groups[1].Value;
+                modifiedOptions = Regex.Replace(modifiedOptions, entrypointPattern, "").Trim();
             }
 
-            return (entrypoint, commandArguments);
+            Match argsMatch = Regex.Match(options, argsPattern);
+            if (argsMatch.Success)
+            {
+                arguments = argsMatch.Groups[1].Value.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                modifiedOptions = Regex.Replace(modifiedOptions, argsPattern, "").Trim();
+            }
+
+            return (modifiedOptions, entrypoint, arguments);
         }
     }
 
