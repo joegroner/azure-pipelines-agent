@@ -153,8 +153,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
                 {
                     ["standardInInput"] = JsonUtility.ToString(input),
                     ["path"] = HookScriptPath,
-                    ["shell"] = GetDefaultShellForScript(context, HookScriptPath, prependPath),
-                    ["tempDirectory"] = HostContext.GetDirectory(WellKnownDirectory.Temp)
+                    ["shell"] = GetDefaultShellForScript(context, HookScriptPath, prependPath)
                 };
 
                 var handlerFactory = HostContext.GetService<IHandlerFactory>();
@@ -293,6 +292,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks
             // The container-hooks expect these variables to be in the environment
             context.Variables.Set("github.workspace", context.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory));
             context.Variables.Set("runner.workspace", context.Variables.Get(Constants.Variables.Agent.WorkFolder));
+            context.Variables.Set("runner.temp", context.Variables.Get(Constants.Variables.Agent.TempDirectory));
         }
 
         private void PublishTelemetry(

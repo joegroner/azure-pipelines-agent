@@ -153,12 +153,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 #endif
             AddEndpointsToEnvironment();
 
-            string tempDirectory = Inputs.GetValueOrDefault("tempDirectory");
-            if(!string.IsNullOrEmpty(tempDirectory))
-            {
-                Environment.Add("RUNNER_TEMP", tempDirectory);
-            }
-
             ExecutionContext.Debug($"{fileName} {arguments}");
 
             Inputs.TryGetValue("standardInInput", out var standardInInput);
