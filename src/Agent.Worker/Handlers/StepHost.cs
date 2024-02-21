@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Agent.Sdk;
+using Agent.Sdk.Knob;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,12 +12,10 @@ using System.Threading.Tasks;
 using Microsoft.TeamFoundation.Framework.Common;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Container;
+using Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks;
 using Microsoft.VisualStudio.Services.WebApi;
 using Newtonsoft.Json;
-using System.Threading.Channels;
 using System.Linq;
-using Microsoft.VisualStudio.Services.Agent.Worker.Container.ContainerHooks;
-using Agent.Sdk.Knob;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
 {
